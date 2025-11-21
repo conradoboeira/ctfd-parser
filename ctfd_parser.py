@@ -14,6 +14,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from getpass import getpass
 import shutil
+import threading
 
 ROOT = os.path.dirname(__file__)
 
@@ -62,7 +63,32 @@ class CTFdParser(object):
 
         return 'Your username or password is incorrect' not in r.text
 
-    def get_challenges(self:object, threads:int=8) -> dict:
+    def get_report(self:object, threads:int=8) -> None:
+        threading.Timer(60.0, self.get_report).start()
+        self.get_challenges(threads,parse=False)
+        unsolved_challenges = {}
+
+        for index in range(len(self.challenges)):
+            chall = self.challenges[index]
+            if(not chall['solved_by_me']):
+                unsolved_challenges[index] = chall['solves']
+
+        unsolved_challenges = {k: v for k, v in sorted(unsolved_challenges.items(), key=lambda item: item[1],reverse=True)}
+
+        print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+        print("-"*30 + "Chall Report" + "-"*30)
+        for index in unsolved_challenges:
+            chall = self.challenges[index]
+            name = chall['name']
+            points = chall['value']
+            cat = chall['category']
+            solves = chall['solves']
+
+            print(f"Challenge {name:>20} | Solves {solves:>3} | {cat:>20} | Points {points:>4} ")
+        print("-"*30 + "------------" + "-"*30)
+
+
+    def get_challenges(self:object, threads:int=8, parse:bool=True) -> dict:
         r = self.session.get(self.target + "/api/v1/challenges")
 
         if r.status_code == 200:
@@ -70,7 +96,7 @@ class CTFdParser(object):
             if json_challs is not None:
                 if json_challs['success']:
                     self.challenges = json_challs['data']
-                    self._parse(threads=threads)
+                    if(parse): self._parse(threads=threads)
                 else:
                     print("[warn] An error occurred while requesting /api/v1/challenges")
             return json_challs
@@ -220,8 +246,10 @@ class CTFdParser(object):
 
         self.write_json(folder, 'team_solves.json', team_solves)
 
-    def invoke_command(self:object, threads:int, dump:bool) -> None:
-        if dump:
+    def invoke_command(self:object, threads:int, dump:bool, report:bool) -> None:
+        if report:
+            self.get_report(threads)
+        elif dump:
             folder = os.path.sep.join([self.basedir, 'Data'])
             if not os.path.exists(folder):
                 os.makedirs(folder)
@@ -254,12 +282,13 @@ def header() -> None:
 def parseArgs() -> dict:
     header()
     parser = argparse.ArgumentParser(description="CTFdParser")
-    parser.add_argument("-t", "--target", required=True, help="CTFd target (domain or ip)")
+    parser.add_argument("-t", "--target", required=False, help="CTFd target (domain or ip)")
     parser.add_argument("-o", "--output", required=False, help="Output directory")
     parser.add_argument("-u", "--user", required=False, help="Username to login to CTFd")
     parser.add_argument("-p", "--password", required=False, help="Password to login to CTFd (default: interactive)")
     parser.add_argument("-T", "--threads", required=False, default=8, type=int, help="Number of threads (default: 8)")
     parser.add_argument("-D", "--dump", required=False, action="store_true", help="Dump info like users, teams and scoreboard (default: False)")
+    parser.add_argument("-R", "--report", required=False, action="store_true", help="Report most solved challenges (default: False)")
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="Verbose mode. (default: False)")
     parser.add_argument("-I", "--initfile", default=False, action="store_true", help="Init default files. (solve.py / writeup.md)")
     args = parser.parse_args()
@@ -273,6 +302,7 @@ def parseArgs() -> dict:
     config['threads'] = args.threads
     config["output"] = args.output
     config['initfile'] = args.initfile
+    config['report'] = args.report
     
     return config
 
@@ -304,6 +334,8 @@ def checkConfig() -> dict:
         config["output"] = None
     if not config.get("initfile"):
         config["initfile"] = None
+    if not config.get("report"):
+        config["report"] = False
             
     return config
 
@@ -313,8 +345,12 @@ def checkConfig() -> dict:
 def main() -> int:
     config = checkConfig()
     args = None
+    args_config = parseArgs()
     if not config:
-        config = parseArgs()    
+        config = args_config
+    if args_config['report']:
+        config['report'] = True
+
     
     target = config['url']
     output = config['output']
@@ -323,6 +359,7 @@ def main() -> int:
     threads = config['threads']
     dump = config['dump']
     initfile = config['initfile']
+    report = config['report']
     
     if not target.startswith("http://") and not target.startswith("https://"):
         target = "https://" + target
@@ -339,11 +376,11 @@ def main() -> int:
     cp = CTFdParser(target, user, password, output, initfile)
     if(user is not None):
         if cp.login():
-            cp.invoke_command(threads=threads, dump=dump)
+            cp.invoke_command(threads=threads, dump=dump, report=report)
         else:
             print("[-] Login failed")
             return -1
-    cp.invoke_command(threads=threads, dump=dump)
+    #cp.invoke_command(threads=threads, dump=dump)
     return 0
 
 if __name__ == '__main__':
